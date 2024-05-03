@@ -1,0 +1,489 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": 
+	{
+		"location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "String",
+            "metadata": { "description": "Location for all resources" }
+        },
+		"vnetName": {
+            "defaultValue": "My-VNET",
+			"type": "String",
+            "metadata": { "description": "Name of the Virtual Network" }
+        },		
+		"vnetAddressPrefix": {
+      		"type": "string",
+      		"defaultValue": "10.0.0.0/16",
+      		"metadata": { "description": "IP CIDR value for Virtual Network" }
+    	},
+	    "subnet1Name": {
+      		"type": "string",
+      		"defaultValue": "Subnet1",
+      		"metadata": { "description": "Subnet Name for Database Server VM" }
+    	},
+    	"subnet1Prefix": {
+			"type": "string",
+			"defaultValue": "10.0.0.0/24",
+			"metadata": { "description": "IP CIDR value for Subnet #1" }
+    	},
+    	"subnet2Name": {
+			"type": "string",
+			"defaultValue": "Subnet2",
+			"metadata": {	"description": "Subnet Name for App Server VM" }
+    	},
+    	"subnet2Prefix": {
+			"type": "string",
+			"defaultValue": "10.0.1.0/24",
+			"metadata": { "description": "IP CIDR value for Subnet #2" }
+    	},
+     	"cxVMName": {
+        	"defaultValue": "CxServer",
+        	"type": "String",
+        	"metadata": { "description": "The name of the App Server" }
+    	},
+		"cxadminUsername": {
+			"defaultValue": "cxadminuser",
+			"type": "String",
+			"metadata": { "description": "The admin username of the App Server" }
+		},
+		"cxadminPassword": {
+			"type": "SecureString",
+			"metadata": { "description": "The admin password of the App Server" }
+		},
+		"cxVMSize": {
+			"defaultValue": "Standard_B2s",
+			"allowedValues": [ 				"Standard_B2s", 				"Standard_B1ls",  				"Standard_B2ms", 				"Standard_B4ms" 			],
+			"type": "String",
+			"metadata": { 				"description": "The virtual machine size for App Server" 			}
+		},
+		"ApplicationPort": {
+			"defaultValue": "5005",
+			"type": "String",
+			"metadata": { "description": "External TLS Port used for communication between App Server and Sensor" }
+		},
+		"DB VM Name": {
+			"defaultValue": "DBVm",
+			"type": "String",
+			"metadata": {				"description": "The name of the Database Server" 			}
+		},
+		"DB VM Size": {
+			"defaultValue": "Standard_B2s",
+			"allowedValues": [ 				"Standard_B2s", 				"Standard_B1s", 				"Standard_B2ms",  				"Standard_B4ms"			],
+			"type": "String",
+			"metadata": { 				"description": "The virtual machine size for Database Server" 			}
+		},
+		"SQL SKU": {
+			"defaultValue": "Standard",
+			"allowedValues": [ 				"Standard", 				"Enterprise" 			],
+			"type": "String",
+			"metadata": { 				"description": "SQL Server SKU" 			}
+		},
+		"adminUsername": { 
+		"defaultValue": "cxdbuser",
+			"type": "String",
+			"metadata": { 				"description": "The admin username of the Database Server" 			}
+		},
+		"adminPassword": {
+			"type": "SecureString",
+			"metadata": { 				"description": "The admin password of the Database Server" 			}
+		},
+		"dataPath": {
+			"defaultValue": "F:\\SQLData",
+			"type": "String",
+			"metadata": { 				"description": "Path for SQL Data files. Please choose drive letter from F to Z, and other drives from A to E are reserved for system" 			}
+		},
+		"logPath": {
+			"defaultValue": "G:\\SQLLog",
+			"type": "String",
+			"metadata": { 				"description": "Path for SQL Log files. Please choose drive letter from F to Z and different than the one used for SQL data. Drive letter from A to E are reserved for system" 			}
+		},
+		"SQLAuthenticationLogin": {
+		"defaultValue": "sqluser",
+			"type": "string",
+			"metadata": { 				"description": "SQL Server - Username" 			}
+		},
+		"SQLAuthenticationPassword": {
+			"type": "securestring",
+			"metadata": { 				"description": "SQL Server - Password" 			}
+		},
+		"SQLDataDisksCount": {
+			"defaultValue": 1, 			"minValue": 1, 			"maxValue": 8, 			"type": "Int",
+			"metadata": { 				"description": "Amount of data disks (1TB each) for SQL Data files"			}
+		}
+    },
+    "variables": {
+        "networkInterfaceName": "nic-1",
+        "networkInterface2Name": "nic-2",
+        "subnet1Ref": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnet1Name'))]",
+        "subnet2Ref": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnet2Name'))]", 
+        "networkSecurityGroupName": "NSG",
+		"networkSecurityGroupName2": "NSG-2",
+		"publicIPAddressName": "publicIp-1",
+		"publicIPAddressName2": "publicIp-2",
+        "publicIpAddressType": "Static",
+        "publicIpAddressSku": "Basic",
+        "diskConfigurationType": "NEW",
+        "nsgId": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName'))]",
+		"dataDisksLuns": "[array(range(0 ,parameters('SQLDataDisksCount')))]",
+        "logDisksLuns": "[array(range(parameters('SQLDataDisksCount'), 1))]",
+        "dataDisks": {
+            "createOption": "empty",
+            "caching": "ReadOnly",
+            "writeAcceleratorEnabled": false,
+            "storageAccountType": "Premium_LRS",
+            "diskSizeGB": 32
+        },
+        "tempDbPath": "D:\\SQLTemp"
+    },
+    "resources": [
+        {            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2017-06-01",
+            "name": "[parameters('vnetName')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [            
+							"[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName'))]",
+							"[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName2'))]"
+				],
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [                         "[parameters('vnetAddressPrefix')]"          ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('subnet1Name')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('subnet1Prefix')]",
+							"networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName'))]"
+                            }
+                        }
+                    },
+                    {
+                        "name": "[parameters('subnet2Name')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('subnet2Prefix')]",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('networkSecurityGroupName2'))]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },	
+        {           "type": "Microsoft.Network/networkInterfaces",
+					"apiVersion": "2017-06-01",
+					"name": "[variables('networkInterfaceName')]",
+					"location": "[parameters('location')]",
+					"dependsOn": [ "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]" ],
+					"properties": {
+							"ipConfigurations": [
+													{
+														"name": "ipconfig1",
+														"properties": {
+															"subnet": { "id": "[variables('subnet1Ref')]" },
+															"privateIPAllocationMethod": "Dynamic",
+															"publicIpAddress": { "id": "[resourceId('Microsoft.Network/publicIpAddresses', variables('publicIpAddressName'))]" }
+														}
+													}
+												]
+					}
+        },      
+        {            "type": "Microsoft.Network/publicIPAddresses",
+						"apiVersion": "2017-06-01",
+						"name": "[variables('publicIpAddressName')]",
+						"location": "[parameters('location')]",
+						"properties": {
+							"publicIPAllocationMethod": "[variables('publicIpAddressType')]"
+						}
+        },
+        {            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2019-02-01",
+            "name": "[variables('networkSecurityGroupName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "securityRules": [
+            {
+                "name": "RDP",
+                "properties": {
+                    "priority": 300,
+                    "protocol": "TCP",
+                    "access": "Allow",
+                    "direction": "Inbound",
+                    "sourceAddressPrefix": "*",
+                    "sourcePortRange": "*",
+                    "destinationAddressPrefix": "*",
+                    "destinationPortRange": "3389"
+                }
+            },
+	    	{
+                "name": "SQL_Port",
+                "properties": {
+                    "priority": 310,
+                    "protocol": "TCP",
+                    "access": "Allow",
+                    "direction": "Inbound",
+                    "sourceAddressPrefix": "*",
+                    "sourcePortRange": "*",
+                    "destinationAddressPrefix": "*",
+                    "destinationPortRange": "1433"
+                }
+            }]
+            }
+        },
+        {            "type": "Microsoft.Compute/virtualMachines",
+            "apiVersion": "2018-10-01",
+            "name": "[parameters('DB VM Name')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('networkInterfaceName'))]"
+            ],
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('DB VM Size')]"
+                },
+                "storageProfile": {
+                    "osDisk": {
+                        "createOption": "fromImage",
+                        "managedDisk": {
+                            "storageAccountType": "Premium_LRS"
+                        }
+                    },
+                    "imageReference": {
+                        "publisher": "MicrosoftSQLServer",
+                        "offer": "SQL2017-WS2016",
+                        "sku": "[parameters('SQL SKU')]",
+                        "version": "latest"
+                    },
+                    "copy": [
+                        {
+                            "name": "dataDisks",
+                            "count": "[add(parameters('SQLDataDisksCount'), 1)]",
+                            "input": {
+                                "lun": "[copyIndex('dataDisks')]",
+                                "createOption": "[variables('dataDisks').createOption]",
+                                "caching": "[if(greaterOrEquals(copyIndex('dataDisks'), parameters('SQLDataDisksCount')) ,'None', variables('dataDisks').caching )]",
+                                "writeAcceleratorEnabled": "[variables('dataDisks').writeAcceleratorEnabled]",
+                                "diskSizeGB": "[variables('dataDisks').diskSizeGB]",
+                                "managedDisk": {
+                                    "storageAccountType": "[variables('dataDisks').storageAccountType]"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterfaceName'))]"
+                        }
+                    ]
+                },
+                "osProfile": {
+                    "computerName": "[parameters('DB VM Name')]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "windowsConfiguration": {
+                        "enableAutomaticUpdates": true,
+                        "provisionVmAgent": true
+                    }
+                }
+            }
+        },
+        {            "type": "Microsoft.SqlVirtualMachine/SqlVirtualMachines",
+            "apiVersion": "2017-03-01-preview",
+            "name": "[parameters('DB VM Name')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Compute/virtualMachines', parameters('DB VM Name'))]"
+            ],
+            "properties": {
+                "virtualMachineResourceId": "[resourceId('Microsoft.Compute/virtualMachines', parameters('DB VM Name'))]",
+                "sqlManagement": "Full",
+                "SqlServerLicenseType": "PAYG",
+                "StorageConfigurationSettings": {
+                    "DiskConfigurationType": "[variables('diskConfigurationType')]",
+                    "StorageWorkloadType": "General",
+                    "SQLDataSettings": {
+                        "LUNs": "[variables('dataDisksLUNs')]",
+                        "DefaultFilePath": "[parameters('dataPath')]"
+                    },
+                    "SQLLogSettings": {
+                        "Luns": "[variables('logDisksLUNs')]",
+                        "DefaultFilePath": "[parameters('logPath')]"
+                    },
+                    "SQLTempDbSettings": {
+                        "DefaultFilePath": "[variables('tempDbPath')]"
+                    }
+					
+				},
+				"ServerConfigurationsManagementSettings": {
+                    "SQLConnectivityUpdateSettings": {
+                        "ConnectivityType": "Private",
+                        "Port": 1433,
+                        "SQLAuthUpdateUserName": "[parameters('SQLAuthenticationLogin')]",
+                        "SQLAuthUpdatePassword": "[parameters('SQLAuthenticationPassword')]"
+                    },
+                    "AdditionalFeaturesServerConfigurations": {
+                        "IsRServicesEnabled": "false"
+                    }
+                }
+            }
+        },
+		
+		
+		{            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2019-08-01",
+            "name": "[variables('networkSecurityGroupName2')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "securityRules": [{
+                "name": "RDP",
+                "properties": {
+                    "priority": 300,
+                    "protocol": "TCP",
+                    "access": "Allow",
+                    "direction": "Inbound",
+                    "sourceAddressPrefix": "*",
+                    "sourcePortRange": "*",
+                    "destinationAddressPrefix": "*",
+                    "destinationPortRange": "3389"
+                }
+            },
+	    	{
+                "name": "HTTP",
+                "properties": {
+                    "priority": 310,
+                    "protocol": "TCP",
+                    "access": "Allow",
+                    "direction": "Inbound",
+                    "sourceAddressPrefix": "*",
+                    "sourcePortRange": "*",
+                    "destinationAddressPrefix": "*",
+                    "destinationPortRange": "80"
+                }
+            },
+			{
+                "name": "HTTPS",
+                "properties": {
+                    "priority": 320,
+                    "protocol": "TCP",
+                    "access": "Allow",
+                    "direction": "Inbound",
+                    "sourceAddressPrefix": "*",
+                    "sourcePortRange": "*",
+                    "destinationAddressPrefix": "*",
+                    "destinationPortRange": "443"
+                }
+            },
+			{
+                "name": "ApplicationPort",
+                "properties": {
+                    "priority": 400,
+                    "protocol": "TCP",
+                    "access": "Allow",
+                    "direction": "Inbound",
+                    "sourceAddressPrefix": "*",
+                    "sourcePortRange": "*",
+                    "destinationAddressPrefix": "*",
+                    "destinationPortRange": "[parameters('ApplicationPort')]"
+                }
+            }]
+            }
+        },
+		{            "type": "Microsoft.Network/networkInterfaces",
+						"apiVersion": "2017-06-01",
+						"name": "[variables('networkInterface2Name')]",
+						"location": "[parameters('location')]",
+						"dependsOn": [ "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]" ],
+						"properties": {
+							"ipConfigurations": [
+								{
+									"name": "ipconfig1",
+									"properties": {
+										"subnet": {	"id": "[variables('subnet2Ref')]" },
+										"privateIPAllocationMethod": "Dynamic",
+										"publicIpAddress": { "id": "[resourceId('Microsoft.Network/publicIpAddresses', variables('publicIPAddressName2'))]" }
+									}
+								}
+							]
+            }
+        },
+		{            "type": "Microsoft.Network/publicIPAddresses",
+							"apiVersion": "2017-06-01",
+							"name": "[variables('publicIpAddressName2')]",
+							"location": "[parameters('location')]",
+							"properties": {
+							"publicIPAllocationMethod": "[variables('publicIpAddressType')]"
+							}
+        },
+	    {            "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2017-03-30",
+      "name": "[parameters('cxVMName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkInterfaces/', variables('networkInterface2Name'))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('cxVMSize')]"
+        },
+        "osProfile": {
+          "computerName": "[parameters('cxVMName')]",
+          "adminUsername": "[parameters('cxadminUsername')]",
+          "adminPassword": "[parameters('cxadminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "MicrosoftWindowsServer",
+            "offer": "WindowsServer",
+            "sku": "2016-Datacenter",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[concat(parameters('cxVMName'), '_OSDisk')]",
+            "caching": "ReadWrite",
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "Premium_LRS"
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('networkInterface2Name'))]"
+            }
+          ]
+        }
+      }
+    	},
+	    {            "type": "Microsoft.Compute/virtualMachines/extensions",
+		"apiVersion": "2019-12-01",
+		"name": "[concat(parameters('cxVMName'),'/', 'PostInstallationScript')]",
+		"location": "[parameters('location')]",
+		"dependsOn": [
+				"[concat('Microsoft.Compute/virtualMachines/',parameters('cxVMName'))]"
+				],
+		"properties": {
+			"publisher": "Microsoft.Compute",
+			"type": "CustomScriptExtension",
+			"typeHandlerVersion": "1.7",
+			"autoUpgradeMinorVersion":true,
+			"settings": {
+				"fileUris": [
+				"https://raw.githubusercontent.com/deploymentfiles/powershellscript/master/PostInstallationScript.ps1"
+				],
+			"commandToExecute": "powershell.exe -ExecutionPolicy Unrestricted -File PostInstallationScript.ps1"
+			}
+		} 
+		}  
+    ],
+    "outputs": {
+        "adminUsername": {
+            "type": "String",
+            "value": "[parameters('adminUsername')]"
+        }
+    }
+}
